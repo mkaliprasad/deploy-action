@@ -51,11 +51,14 @@ runs:
           APP="${{ github.event.repository.name }}"
         fi
 
+        BRANCH="${{ inputs.branch }}"
+        echo "▶ Deploying app=$APP branch=$BRANCH"
+
         OUTPUT=$(
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=no \
               "${{ inputs.ssh-user }}@${{ inputs.ssh-host }}" \
-              "APP_NAME='$APP' BRANCH='${{ inputs.branch }}' DEPLOY_BASE='/var/www' bash -s" \
+              "APP_NAME='$APP' BRANCH='$BRANCH' DEPLOY_BASE='/var/www' bash -s" \
               < "${{ github.action_path }}/scripts/deploy.sh" 2>&1
         )
         EXIT_CODE=$?
@@ -70,13 +73,15 @@ runs:
 
     - name: Post result to PR
       uses: actions/github-script@v7
+      env:
+        DEPLOY_LOGS: ${{ steps.deploy.outputs.logs }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
           const success = '${{ steps.deploy.outcome }}' === 'success';
           const icon = success ? '✅' : '❌';
           const status = success ? 'succeeded' : 'failed';
-          const logs = `${{ steps.deploy.outputs.logs }}`;
+          const logs = process.env.DEPLOY_LOGS || '';
           const env = '${{ inputs.environment }}' || 'server';
           const app = '${{ inputs.app-name }}' || context.repo.repo;
 
