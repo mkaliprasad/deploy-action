@@ -36,7 +36,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
 
     steps:
       - name: Checkout (to get deploy.sh)
@@ -45,12 +44,37 @@ jobs:
           repository: mkaliprasad/deploy-action
           ref: main
 
-      - name: Set up SSH
+      # Credentials live as repo secrets in deploy-action, prefixed by environment.
+      # e.g. STAGING_SSH_HOST, SANDBOX_SSH_KEY, PREPROD_SSH_USER
+      - name: Set up SSH (staging)
+        if: inputs.environment == 'staging'
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H "${{ secrets.STAGING_SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "DEPLOY_SSH_USER=${{ secrets.STAGING_SSH_USER }}" >> "$GITHUB_ENV"
+          echo "DEPLOY_SSH_HOST=${{ secrets.STAGING_SSH_HOST }}" >> "$GITHUB_ENV"
+
+      - name: Set up SSH (sandbox)
+        if: inputs.environment == 'sandbox'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SANDBOX_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SANDBOX_SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "DEPLOY_SSH_USER=${{ secrets.SANDBOX_SSH_USER }}" >> "$GITHUB_ENV"
+          echo "DEPLOY_SSH_HOST=${{ secrets.SANDBOX_SSH_HOST }}" >> "$GITHUB_ENV"
+
+      - name: Set up SSH (preprod)
+        if: inputs.environment == 'preprod'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PREPROD_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.PREPROD_SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "DEPLOY_SSH_USER=${{ secrets.PREPROD_SSH_USER }}" >> "$GITHUB_ENV"
+          echo "DEPLOY_SSH_HOST=${{ secrets.PREPROD_SSH_HOST }}" >> "$GITHUB_ENV"
 
       - name: Deploy
         id: deploy
@@ -61,14 +85,10 @@ jobs:
           fi
 
           OUTPUT=$(
-            APP_NAME="$APP" \
-            PR_NUMBER="${{ inputs.pr-number }}" \
-            BRANCH="${{ inputs.branch }}" \
-            DEPLOY_BASE="${{ vars.DEPLOY_BASE }}" \
             ssh -i ~/.ssh/deploy_key \
                 -o StrictHostKeyChecking=no \
-                "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-                "APP_NAME='$APP_NAME' PR_NUMBER='$PR_NUMBER' BRANCH='$BRANCH' DEPLOY_BASE='${DEPLOY_BASE:-/var/www}' bash -s" \
+                "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+                "APP_NAME='$APP' PR_NUMBER='${{ inputs.pr-number }}' BRANCH='${{ inputs.branch }}' DEPLOY_BASE='/var/www' bash -s" \
                 < scripts/deploy.sh 2>&1
           )
           EXIT_CODE=$?
