@@ -5,11 +5,14 @@
 #   @deployment-skill deploy sandbox
 #   @deployment-skill deploy preprod
 #
-# Required setup in THIS repo's GitHub Environments (staging / sandbox / preprod):
+# Required: configure GitHub Environments in THIS app repo (staging / sandbox / preprod).
+# Each environment needs these secrets:
 #   SSH_HOST  — server hostname
 #   SSH_USER  — SSH login user
-#   SSH_KEY   — private SSH key (PEM)
-# These are configured once in xola/deploy-action — nothing needed here.
+#   SSH_KEY   — private SSH key (PEM contents)
+#
+# Tip: if all your repos share the same servers, use organisation-level secrets
+# so you only configure them once and every repo inherits them automatically.
 
 name: Deploy via PR Comment
 
@@ -34,7 +37,6 @@ jobs:
         id: parse
         run: |
           COMMENT="${{ github.event.comment.body }}"
-          # Extract the word after "@deployment-skill deploy"
           ENV=$(echo "$COMMENT" | grep -oP '(?<=@deployment-skill deploy\s)\S+')
           VALID_ENVS="staging sandbox preprod"
           if ! echo "$VALID_ENVS" | grep -qw "$ENV"; then
@@ -68,12 +70,16 @@ jobs:
 
   deploy:
     needs: parse
-    uses: xola/deploy-action/.github/workflows/deploy.yml@main
-    with:
-      environment: ${{ needs.parse.outputs.environment }}
-      branch: ${{ needs.parse.outputs.branch }}
-      pr-number: ${{ github.event.issue.number }}
-      calling-owner: ${{ github.repository_owner }}
-      calling-repo: ${{ github.event.repository.name }}
-    secrets:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    runs-on: ubuntu-latest
+    # Loads SSH_HOST, SSH_USER, SSH_KEY from this environment's secrets
+    environment: ${{ needs.parse.outputs.environment }}
+    steps:
+      - uses: mkaliprasad/deploy-action@main
+        with:
+          ssh-host: ${{ secrets.SSH_HOST }}
+          ssh-user: ${{ secrets.SSH_USER }}
+          ssh-key: ${{ secrets.SSH_KEY }}
+          branch: ${{ needs.parse.outputs.branch }}
+          pr-number: ${{ github.event.issue.number }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          environment: ${{ needs.parse.outputs.environment }}

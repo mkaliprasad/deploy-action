@@ -1,0 +1,105 @@
+name: 'Deploy to Server'
+description: 'SSH deploy an app to a target server, triggered by a PR comment'
+author: 'xola'
+
+inputs:
+  ssh-host:
+    description: 'Target server hostname'
+    required: true
+  ssh-user:
+    description: 'SSH login user'
+    required: true
+  ssh-key:
+    description: 'SSH private key (PEM contents)'
+    required: true
+  branch:
+    description: 'Branch to deploy'
+    required: true
+  pr-number:
+    description: 'PR number (used to post the result comment)'
+    required: true
+  github-token:
+    description: 'GitHub token for posting PR comments'
+    required: true
+  app-name:
+    description: 'App name to deploy. Defaults to the calling repo name.'
+    required: false
+    default: ''
+  environment:
+    description: 'Environment name shown in the PR result comment'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Set up SSH
+      shell: bash
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ inputs.ssh-key }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H "${{ inputs.ssh-host }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+    - name: Deploy
+      id: deploy
+      shell: bash
+      continue-on-error: true
+      run: |
+        APP="${{ inputs.app-name }}"
+        if [ -z "$APP" ]; then
+          APP="${{ github.event.repository.name }}"
+        fi
+
+        OUTPUT=$(
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              "${{ inputs.ssh-user }}@${{ inputs.ssh-host }}" \
+              "APP_NAME='$APP' BRANCH='${{ inputs.branch }}' DEPLOY_BASE='/var/www' bash -s" \
+              < "${{ github.action_path }}/scripts/deploy.sh" 2>&1
+        )
+        EXIT_CODE=$?
+
+        {
+          echo 'logs<<DEPLOY_EOF'
+          echo "$OUTPUT" | head -c 60000
+          echo 'DEPLOY_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+        exit $EXIT_CODE
+
+    - name: Post result to PR
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const success = '${{ steps.deploy.outcome }}' === 'success';
+          const icon = success ? '✅' : '❌';
+          const status = success ? 'succeeded' : 'failed';
+          const logs = `${{ steps.deploy.outputs.logs }}`;
+          const env = '${{ inputs.environment }}' || 'server';
+          const app = '${{ inputs.app-name }}' || context.repo.repo;
+
+          const body = [
+            `${icon} **${app}** deployment to **${env}** ${status}.`,
+            '',
+            '<details>',
+            '<summary>Deployment logs</summary>',
+            '',
+            '```',
+            logs,
+            '```',
+            '</details>',
+          ].join('\n');
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: ${{ inputs.pr-number }},
+            body,
+          });
+
+    - name: Fail if deploy failed
+      if: steps.deploy.outcome == 'failure'
+      shell: bash
+      run: exit 1
