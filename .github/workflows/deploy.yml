@@ -1,0 +1,119 @@
+name: Deploy to Server
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (staging / sandbox / preprod)"
+        required: true
+        type: string
+      app-name:
+        description: "App name to deploy. Defaults to the calling repo name."
+        required: false
+        type: string
+        default: ""
+      pr-number:
+        description: "PR number triggering the deploy"
+        required: true
+        type: string
+      branch:
+        description: "Branch to deploy"
+        required: true
+        type: string
+      calling-owner:
+        description: "Owner of the calling repo (for posting the PR comment)"
+        required: true
+        type: string
+      calling-repo:
+        description: "Name of the calling repo (for posting the PR comment)"
+        required: true
+        type: string
+    secrets:
+      GH_TOKEN:
+        description: "GitHub token from the calling repo (for posting PR comments)"
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout (to get deploy.sh)
+        uses: actions/checkout@v4
+        with:
+          repository: xola/deploy-action
+          ref: main
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy
+        id: deploy
+        run: |
+          APP="${{ inputs.app-name }}"
+          if [ -z "$APP" ]; then
+            APP="${{ inputs.calling-repo }}"
+          fi
+
+          OUTPUT=$(
+            APP_NAME="$APP" \
+            PR_NUMBER="${{ inputs.pr-number }}" \
+            BRANCH="${{ inputs.branch }}" \
+            DEPLOY_BASE="${{ vars.DEPLOY_BASE }}" \
+            ssh -i ~/.ssh/deploy_key \
+                -o StrictHostKeyChecking=no \
+                "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+                "APP_NAME='$APP_NAME' PR_NUMBER='$PR_NUMBER' BRANCH='$BRANCH' DEPLOY_BASE='${DEPLOY_BASE:-/var/www}' bash -s" \
+                < scripts/deploy.sh 2>&1
+          )
+          EXIT_CODE=$?
+
+          # Store output for the PR comment (GitHub output limit is 1MB)
+          {
+            echo 'logs<<DEPLOY_EOF'
+            echo "$OUTPUT" | head -c 60000
+            echo 'DEPLOY_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+          exit $EXIT_CODE
+        continue-on-error: true
+
+      - name: Post result to PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_TOKEN }}
+          script: |
+            const success = '${{ steps.deploy.outcome }}' === 'success';
+            const icon = success ? '✅' : '❌';
+            const status = success ? 'succeeded' : 'failed';
+            const logs = `${{ steps.deploy.outputs.logs }}`;
+            const env = '${{ inputs.environment }}';
+            const app = '${{ inputs.app-name }}' || '${{ inputs.calling-repo }}';
+
+            const body = [
+              `${icon} **${app}** deployment to **${env}** ${status}.`,
+              '',
+              '<details>',
+              '<summary>Deployment logs</summary>',
+              '',
+              '```',
+              logs,
+              '```',
+              '</details>',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: '${{ inputs.calling-owner }}',
+              repo: '${{ inputs.calling-repo }}',
+              issue_number: ${{ inputs.pr-number }},
+              body,
+            });
+
+      - name: Fail job if deploy failed
+        if: steps.deploy.outcome == 'failure'
+        run: exit 1

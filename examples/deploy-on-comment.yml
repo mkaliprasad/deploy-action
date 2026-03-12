@@ -1,0 +1,79 @@
+# Copy this file to .github/workflows/deploy-on-comment.yml in your app repo.
+#
+# Usage: comment on any PR with:
+#   @deployment-skill deploy staging
+#   @deployment-skill deploy sandbox
+#   @deployment-skill deploy preprod
+#
+# Required setup in THIS repo's GitHub Environments (staging / sandbox / preprod):
+#   SSH_HOST  — server hostname
+#   SSH_USER  — SSH login user
+#   SSH_KEY   — private SSH key (PEM)
+# These are configured once in xola/deploy-action — nothing needed here.
+
+name: Deploy via PR Comment
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  parse:
+    # Only run on PR comments from repo members / owners / collaborators
+    if: |
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '@deployment-skill deploy') &&
+      contains(fromJson('["MEMBER", "OWNER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.parse.outputs.environment }}
+      branch: ${{ steps.pr.outputs.branch }}
+
+    steps:
+      - name: Parse environment from comment
+        id: parse
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          # Extract the word after "@deployment-skill deploy"
+          ENV=$(echo "$COMMENT" | grep -oP '(?<=@deployment-skill deploy\s)\S+')
+          VALID_ENVS="staging sandbox preprod"
+          if ! echo "$VALID_ENVS" | grep -qw "$ENV"; then
+            echo "❌ Unknown environment: '$ENV'. Valid options: $VALID_ENVS"
+            exit 1
+          fi
+          echo "environment=$ENV" >> "$GITHUB_OUTPUT"
+
+      - name: React with 🚀
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket',
+            });
+
+      - name: Get PR branch
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            core.setOutput('branch', pr.head.ref);
+
+  deploy:
+    needs: parse
+    uses: xola/deploy-action/.github/workflows/deploy.yml@main
+    with:
+      environment: ${{ needs.parse.outputs.environment }}
+      branch: ${{ needs.parse.outputs.branch }}
+      pr-number: ${{ github.event.issue.number }}
+      calling-owner: ${{ github.repository_owner }}
+      calling-repo: ${{ github.event.repository.name }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
