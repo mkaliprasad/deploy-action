@@ -42,7 +42,7 @@ jobs:
       - name: Checkout (to get deploy.sh)
         uses: actions/checkout@v4
         with:
-          repository: xola/deploy-action
+          repository: mkaliprasad/deploy-action
           ref: main
 
       - name: Set up SSH
