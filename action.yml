@@ -58,7 +58,7 @@ runs:
           ssh -i ~/.ssh/deploy_key \
               -o StrictHostKeyChecking=no \
               "${{ inputs.ssh-user }}@${{ inputs.ssh-host }}" \
-              "APP_NAME='$APP' BRANCH='$BRANCH' DEPLOY_BASE='/var/www' bash -s" \
+              "export APP_NAME='$APP' BRANCH='$BRANCH' DEPLOY_BASE='/var/www'; bash -s" \
               < "${{ github.action_path }}/scripts/deploy.sh" 2>&1
         )
         EXIT_CODE=$?

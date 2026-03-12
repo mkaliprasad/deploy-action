@@ -25,10 +25,11 @@ echo "🚀 Deploying **${APP_NAME}** from \`${APP_DIR}\`"
 cd "$APP_DIR"
 
 # ── Step 1: Git ────────────────────────────────────────────────────────────────
-if [ -n "${PR_NUMBER:-}" ] && [ -n "${BRANCH:-}" ]; then
-  echo "🔀 Fetching PR #${PR_NUMBER} → branch \`${BRANCH}\`..."
-  git fetch origin "pull/${PR_NUMBER}/head:${BRANCH}"
+if [ -n "${BRANCH:-}" ] && [ "${BRANCH}" != "master" ]; then
+  echo "🔀 Fetching branch \`${BRANCH}\`..."
+  git fetch origin "${BRANCH}"
   git checkout "${BRANCH}"
+  git reset --hard "origin/${BRANCH}"
 else
   echo "📡 Pulling latest \`master\`..."
   git checkout master
